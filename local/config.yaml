@@ -1,0 +1,104 @@
+receivers:
+  otlp:
+    protocols:
+      http: # Porta padrão 4318
+
+processors:
+  transform/logs:
+    log_statements:
+      - context: log
+        statements:
+          # Parse do campo "data" (que é um JSON como string)
+          - set(log.cache, ParseJSON(String(log.attributes["data"]))) where log.attributes["data"] != nil
+
+
+          # Extrações dos campos úteis do JSON
+          - set(log.attributes["session_id"], log.cache["session_id"]) where log.cache["session_id"] != nil
+          - set(log.attributes["email"], log.cache["email"]) where log.cache["email"] != nil
+          - set(log.attributes["country"], log.cache["country"]) where log.cache["country"] != nil
+          - set(log.attributes["browser"], log.cache["browser"]) where log.cache["browser"] != nil
+          - set(log.attributes["login_time"], log.cache["login_time"]) where log.cache["login_time"] != nil
+          - set(log.attributes["ip_address"], log.cache["ip_address"]) where log.cache["ip_address"] != nil
+
+          # Para geolocalização
+          - set(log.attributes["source.address"], log.cache["ip_address"]) where log.cache["ip_address"] != nil
+
+          # Remove campo original "data"
+          - delete_key(log.attributes, "data")
+
+  geoip:
+    context: record
+    source: "source.address"
+    target: "log.attributes"
+    providers:
+      maxmind:
+        database_path: ./../geolite-database/GeoLite2-City.mmdb
+
+  transform/rename_geo:
+    log_statements:
+      - context: log
+        statements:
+          - set(log.attributes["country_login"], log.attributes["geo.country_name"]) where log.attributes["geo.country_name"] != nil
+          - set(log.attributes["region_login"], log.attributes["geo.region_name"]) where log.attributes["geo.region_name"] != nil
+          - set(log.attributes["city_login"], log.attributes["geo.city_name"]) where log.attributes["geo.city_name"] != nil
+          - set(log.attributes["currency_login"], log.attributes["geo.currency"]) where log.attributes["geo.currency"] != nil
+          - set(log.attributes["timezone"], log.attributes["geo.timezone"]) where log.attributes["geo.timezone"] != nil
+
+          # Limpa os campos intermediários
+          - delete_key(log.attributes, "geo.country_name")
+          - delete_key(log.attributes, "geo.region_name")
+          - delete_key(log.attributes, "geo.city_name")
+          - delete_key(log.attributes, "geo.currency")
+          - delete_key(log.attributes, "geo.timezone")
+
+  attributes/remove_extra_fields:
+    actions:
+      - key: "geo.continent_code"
+        action: "delete"
+      - key: "geo.continent_name"
+        action: "delete"
+      - key: "geo.country_iso_code"
+        action: "delete"
+      - key: "geo.location.lat"
+        action: "delete"
+      - key: "geo.location.lon"
+        action: "delete"
+      - key: "geo.region_iso_code"
+        action: "delete"
+      - key: "geo.postal_code"
+        action: "delete"
+      - key: "source.address"
+        action: "delete"
+
+  batch:
+    send_batch_size: 8192
+    timeout: 200ms
+
+exporters:
+  debug:
+    verbosity: detailed
+
+  #otlphttp:
+  #  endpoint: "http://localhost:4318"
+
+  otlphttp/newrelic:
+    endpoint: https://otlp.nr-data.net:4318
+    headers:
+      api-key: ""
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/newrelic]
+
+    logs:
+      receivers: [otlp]
+      processors:
+        - transform/logs
+        - geoip
+        - transform/rename_geo
+        - attributes/remove_extra_fields
+        - batch
+      exporters: [otlphttp/newrelic]
