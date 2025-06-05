@@ -95,7 +95,7 @@ service:
 * `otel.bin` built with only the required components
 * MaxMind GeoLite2 database located at `./../geolite-database/GeoLite2-City.mmdb`
 
-### ▶Running the Collector
+### Running the Collector
 
 ```bash
 cd geoip-collector
